@@ -8,12 +8,6 @@ pub struct User {
     status: bool,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize, FromRow)]
-pub struct Friends {
-    pub player1: String,
-    pub player2: String,
-}
-
 impl User {
     pub fn new(in_username: &str, in_password: &str, in_status: &bool) -> Self {
         Self {
@@ -30,20 +24,5 @@ impl User {
     }
     pub fn get_status(&self) -> bool {
         self.status
-    }
-}
-
-impl Friends {
-    pub fn new(player1_username: &str, player2_username: &str) -> Self {
-        Self {
-            player1: player1_username.to_string(),
-            player2: player2_username.to_string(),
-        }
-    }
-    pub fn get_player1(&self) -> String {
-        self.player1.clone()
-    }
-    pub fn get_player2(&self) -> String {
-        self.player2.clone()
     }
 }

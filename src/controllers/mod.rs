@@ -1,13 +1,16 @@
+mod friend_controller;
+mod lobby_controller;
 mod user_controller;
 mod web_socket_controller;
 pub mod controllers_center {
     use axum::Router;
-    use sqlx::PgPool;
 
+    use crate::app_state::AppState;
+    use crate::controllers::friend_controller;
     use crate::controllers::user_controller;
     use crate::controllers::web_socket_controller;
 
-    pub fn create_app_router() -> Router<PgPool> {
+    pub fn create_app_router() -> Router<AppState> {
         Router::new()
             .route(
                 "/HPD",
@@ -20,16 +23,24 @@ pub mod controllers_center {
             .route("/user/login", axum::routing::post(user_controller::login))
             .route("/user/logout", axum::routing::post(user_controller::logout))
             .route(
-                "/user/friendlist/get",
-                axum::routing::get(user_controller::get_friendlist),
+                "/friendlist/get",
+                axum::routing::get(friend_controller::get_friendlist),
             )
             .route(
-                "/user/friendlist/add",
-                axum::routing::post(user_controller::add_friend),
+                "/friend_request/get",
+                axum::routing::get(friend_controller::get_friend_request),
             )
             .route(
-                "/user/friendlist/remove",
-                axum::routing::post(user_controller::remove_friend),
+                "/friend_request/send",
+                axum::routing::post(friend_controller::send_friend_request),
+            )
+            .route(
+                "/friend_request/accept",
+                axum::routing::post(friend_controller::accept_friend_request),
+            )
+            .route(
+                "/friend_request/decline",
+                axum::routing::post(friend_controller::decline_friend_request),
             )
             .route(
                 "/ws",

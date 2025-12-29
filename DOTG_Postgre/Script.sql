@@ -27,10 +27,14 @@ foreign key (player2) references users(username)
 create table FriendRequests (
 sender varchar(12),
 receiver varchar(12),
-status varchar(12),
 foreign key (sender) references users(username),
 foreign key (receiver) references users(username)
 )
+delete from users
+delete from friends
+
+select * from users
+update users set status = false where username = 'hihi'
 ----------------------------------------------------
 GRANT SELECT, INSERT, UPDATE, DELETE 
 ON ALL TABLES IN SCHEMA public 

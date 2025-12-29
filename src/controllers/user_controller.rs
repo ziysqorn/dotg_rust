@@ -1,5 +1,10 @@
-use serde_json::json;
-use std::collections::HashMap;
+use jsonwebtoken::{EncodingKey, Header, encode};
+use redis::AsyncCommands;
+use serde_json::{Map, Value, json};
+use std::{
+    collections::HashMap,
+    time::{SystemTime, UNIX_EPOCH},
+};
 
 use axum::{
     Json,
@@ -8,9 +13,14 @@ use axum::{
     response::IntoResponse,
 };
 use regex::Regex;
-use sqlx::{postgres::PgRow, PgPool, Row};
+use sqlx::{PgPool, Row, postgres::PgRow};
 
-use crate::models::user::{Friends, User};
+use crate::{
+    app_state::AppState,
+    auth::{AuthUser, Claims, get_jwt_secret},
+    global_vars::USERNAME_REGEX,
+    models::user::User,
+};
 
 pub async fn create_user(
     State(connection_pool): State<PgPool>,
@@ -78,9 +88,13 @@ pub async fn login(
                 .await;
                 match result {
                     Ok(found_row) => {
-                        let online_status= found_row.get::<bool, _>("status");
+                        let online_status = found_row.get::<bool, _>("status");
                         if online_status {
-                            return (StatusCode::UNAUTHORIZED, "User has already logged in another device").into_response();
+                            return (
+                                StatusCode::UNAUTHORIZED,
+                                "User has already logged in another device",
+                            )
+                                .into_response();
                         }
                         if let Err(update_status_error) =
                             sqlx::query("Update users set status = true where username = $1")
@@ -91,14 +105,39 @@ pub async fn login(
                             println!("{:?}", update_status_error);
                             return (StatusCode::UNAUTHORIZED, "Error logging in").into_response();
                         }
-                        return (
-                            StatusCode::OK,
-                            Json(json!({
-                                "username": found_row.get::<String, _>("username"),
-                                "status": true
-                            })),
-                        )
-                            .into_response();
+                        //Create JWT------------------------------------------------------------------//
+                        let expiration = SystemTime::now()
+                            .duration_since(UNIX_EPOCH)
+                            .unwrap()
+                            .as_secs() as usize
+                            + (24 * 3600);
+
+                        let claims = Claims {
+                            subject: in_username.clone(),
+                            exp: expiration,
+                        };
+
+                        if let Ok(token) = encode(
+                            &Header::default(),
+                            &claims,
+                            &EncodingKey::from_secret(get_jwt_secret()),
+                        ) {
+                            return (
+                                StatusCode::OK,
+                                Json(json!({
+                                    "token": token,
+                                    "username": found_row.get::<String, _>("username"),
+                                    "status": true
+                                })),
+                            )
+                                .into_response();
+                        } else {
+                            return (
+                                StatusCode::INTERNAL_SERVER_ERROR,
+                                "Unable to analyze the token",
+                            )
+                                .into_response();
+                        }
                     }
                     Err(_e) => {
                         return (StatusCode::UNAUTHORIZED, "Wrong password !").into_response();
@@ -115,165 +154,24 @@ pub async fn login(
     }
 }
 
-pub async fn logout(
-    State(connection_pool): State<PgPool>,
-    payload: Query<HashMap<String, String>>,
-) -> impl IntoResponse {
-    if !payload.is_empty() {
-        if let Some(in_username) = payload.get("username") {
-            if let Ok(username_regex) = Regex::new("^[a-zA-Z0-9@]{1,12}$")
-                && !username_regex.is_match(in_username)
-            {
-                return (StatusCode::BAD_REQUEST, "Invalid username format !").into_response();
-            }
-            if let Err(update_status_error) =
-                sqlx::query("Update users set status = false where username = $1")
-                    .bind(&in_username)
-                    .execute(&connection_pool)
-                    .await
-            {
-                println!("{:?}", update_status_error);
-                return (StatusCode::CONFLICT, "Error logging out !").into_response();
-            }
-        }
-    } else {
-        return (StatusCode::BAD_REQUEST, "User information empty !").into_response();
+pub async fn logout(State(app_state_): State<AppState>, auth_user: AuthUser) -> impl IntoResponse {
+    if !USERNAME_REGEX.is_match(&auth_user.username) {
+        return (StatusCode::BAD_REQUEST, "Invalid username format !").into_response();
     }
+    if let Err(update_status_error) =
+        sqlx::query("Update users set status = false where username = $1")
+            .bind(&auth_user.username)
+            .execute(&app_state_.connection_pool)
+            .await
+    {
+        println!("{:?}", update_status_error);
+        return (StatusCode::CONFLICT, "Error logging out !").into_response();
+    }
+
+    {
+        let mut clients_map = app_state_.clients_map.write().await;
+        clients_map.remove(&auth_user.username);
+    }
+
     (StatusCode::OK, "Logout successful").into_response()
-}
-
-pub async fn get_friendlist(
-    State(connection_pool): State<PgPool>,
-    query_map: Query<HashMap<String, String>>,
-) -> impl IntoResponse {
-    if !query_map.is_empty() {
-        if let Some(username) = query_map.get("username") {
-            if let Ok(username_regex) = Regex::new("^[a-zA-Z0-9@]{1,12}$")
-                && !username_regex.is_match(username)
-            {
-                return (StatusCode::BAD_REQUEST, "Invalid username format !").into_response();
-            }
-            let mut result_friendlist: Vec<PgRow> = Vec::new();
-            if let Ok(mut friend_list1) = sqlx::query(
-                "Select u.username, u.status from users u inner join friends f on u.username = f.player2 where f.player1 = $1"
-            )
-            .bind(&username)
-            .fetch_all(&connection_pool)
-            .await
-            {
-                result_friendlist.append(&mut friend_list1);
-            }
-            if let Ok(mut friend_list2) = sqlx::query(
-                "Select u.username, u.status from users u inner join friends f on u.username = f.player1 where f.player2 = $1"
-            )
-            .bind(&username)
-            .fetch_all(&connection_pool)
-            .await
-            {
-                result_friendlist.append(&mut friend_list2);
-            }
-            if result_friendlist.is_empty(){
-                (StatusCode::NOT_FOUND, "Friendlist Empty !").into_response()
-            }
-            else{
-                let final_friendlist: Vec<serde_json::Value> = result_friendlist.iter().map(|row| json!({"username": row.get::<String, _>("username"), "status": row.get::<bool, _>("status")})).collect();
-                (StatusCode::OK, Json(final_friendlist)).into_response()
-            }
-        } else {
-            (StatusCode::BAD_REQUEST, "Missing username !").into_response()
-        }
-    } else {
-        (StatusCode::BAD_REQUEST, "User information empty !").into_response()
-    }
-}
-
-pub async fn add_friend(
-    State(connection_pool): State<PgPool>,
-    query_map: Query<HashMap<String, String>>,
-) -> impl IntoResponse {
-    if !query_map.is_empty() {
-        if let (Some(player1_username), Some(player2_username)) =
-            (query_map.get("player1"), query_map.get("player2"))
-        {
-            if let Ok(username_regex) = Regex::new("^[a-zA-Z0-9@]{1,12}$") {
-                if !username_regex.is_match(player1_username) {
-                    return (StatusCode::BAD_REQUEST, "Invalid player1 username format !")
-                        .into_response();
-                }
-                if !username_regex.is_match(player2_username) {
-                    return (StatusCode::BAD_REQUEST, "Invalid player2 username format !")
-                        .into_response();
-                }
-            }
-            let friend_relationship = Friends::new(player1_username, player2_username);
-            if let Ok(found_relationship) = 
-                sqlx::query_as::<_, Friends>("Select player1, player2 from friends where player1 = $1 and player2 = $2 or player1 = $2 and player2 = $1")
-                    .bind(friend_relationship.get_player1())
-                    .bind(friend_relationship.get_player2())
-                    .fetch_all(&connection_pool).await{
-                        if !found_relationship.is_empty(){
-                            return (StatusCode::BAD_REQUEST, "Already friends !").into_response();
-                        }
-                    }
-            if let Ok(result) =
-                sqlx::query("Insert into friends (player1, player2) values ($1, $2)")
-                    .bind(friend_relationship.get_player1())
-                    .bind(friend_relationship.get_player2())
-                    .execute(&connection_pool)
-                    .await
-            {
-                print!("{:?}", result);
-                (StatusCode::CREATED, "Adding friend successfully !").into_response()
-            } else {
-                (StatusCode::CONFLICT, "Error finishing the proccess !").into_response()
-            }
-        } else {
-            (StatusCode::BAD_REQUEST, "Missing players' username !").into_response()
-        }
-    } else {
-        (StatusCode::BAD_REQUEST, "Information empty !").into_response()
-    }
-}
-
-pub async fn remove_friend(
-    State(connection_pool): State<PgPool>,
-    query_map: Query<HashMap<String, String>>,
-) -> impl IntoResponse {
-    if !query_map.is_empty() {
-        if let (Some(player1_username), Some(player2_username)) =
-            (query_map.get("player1"), query_map.get("player2"))
-        {
-            if let Ok(username_regex) = Regex::new("^[a-zA-Z0-9@]{1,12}$") {
-                if !username_regex.is_match(player1_username) {
-                    return (StatusCode::BAD_REQUEST, "Invalid player1 username format !")
-                        .into_response();
-                }
-                if !username_regex.is_match(player2_username) {
-                    return (StatusCode::BAD_REQUEST, "Invalid player2 username format !")
-                        .into_response();
-                }
-            }
-            let friend_relationship = Friends::new(player1_username, player2_username);
-            if let Ok(result) =
-                sqlx::query("Delete from friends where player1 = $1 and player2 = $2 or player1 = $2 and player2 = $1")
-                    .bind(friend_relationship.get_player1())
-                    .bind(friend_relationship.get_player2())
-                    .execute(&connection_pool)
-                    .await
-            {
-                if result.rows_affected() > 0 {
-                    (StatusCode::OK, "Removing friend successfully !").into_response()
-                }
-                else{
-                    (StatusCode::NOT_MODIFIED, "No relationship to remove !").into_response()
-                }
-            } else {
-                (StatusCode::CONFLICT, "Error finishing the proccess !").into_response()
-            }
-        } else {
-            (StatusCode::BAD_REQUEST, "Missing players' username !").into_response()
-        }
-    } else {
-        (StatusCode::BAD_REQUEST, "Information empty !").into_response()
-    }
 }
