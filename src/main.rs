@@ -1,4 +1,6 @@
-use redis::{AsyncConnectionConfig, ConnectionAddr, FromRedisValue, PushInfo, RedisConnectionInfo};
+use redis::{
+    AsyncConnectionConfig, ConnectionAddr, FromRedisValue, PushInfo, PushKind, RedisConnectionInfo,
+};
 use std::{collections::HashMap, sync::Arc};
 use tokio::sync::{
     RwLock,
@@ -60,13 +62,34 @@ async fn subcribe_to_channel(app_state_: AppState, mut rx: UnboundedReceiver<Pus
     if let Ok(()) = conn.subscribe(&["web_socket_events"]).await {
         loop {
             if let Some(redis_message) = rx.recv().await {
-                if let Ok(payload) = String::from_redis_value(redis_message.data[1].clone()) {
-                    if let Ok(payload_json) = serde_json::from_str::<serde_json::Value>(&payload) {
-                        let user_id = payload_json.get("username").unwrap().to_string();
-                        let data = payload_json.get("data").unwrap();
-                        let clients_map = app_state_.clients_map.read().await;
-                        if let Some(sender) = clients_map.get(&user_id) {
-                            let _ = sender.send(data.to_string());
+                if redis_message.kind == PushKind::Message
+                    || redis_message.kind == PushKind::PMessage
+                {
+                    //println!("{:?}", redis_message);
+                    if let Ok(redis_event) = String::from_redis_value(redis_message.data[0].clone())
+                    {
+                        match redis_event.as_str() {
+                            "web_socket_events" => {
+                                if let Ok(payload) =
+                                    String::from_redis_value(redis_message.data[1].clone())
+                                {
+                                    if let Ok(payload_json) =
+                                        serde_json::from_str::<serde_json::Value>(&payload)
+                                    {
+                                        //println!("{:?}", payload_json);
+                                        let user_id =
+                                            payload_json.get("username").unwrap().as_str().unwrap();
+                                        let data = payload_json.get("data").unwrap();
+                                        // println!("{:?}", user_id);
+                                        // println!("{:?}", data);
+                                        let clients_map = app_state_.clients_map.read().await;
+                                        if let Some(sender) = clients_map.get(user_id) {
+                                            let _ = sender.send(data.to_string());
+                                        }
+                                    }
+                                }
+                            }
+                            _ => {}
                         }
                     }
                 }

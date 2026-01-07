@@ -34,7 +34,13 @@ delete from users
 delete from friends
 
 select * from users
-update users set status = false where username = 'hihi'
+select * from FriendRequests
+select * from friends
+update users set status = false where username = 'haha'
+delete from FriendRequests where sender = 'haha' and receiver = 'keke' 
+or sender = 'keke' and receiver = 'haha'
+delete from friends where player1 = 'haha' and player2 = 'keke' 
+or player1 = 'keke' and player2 = 'haha'
 ----------------------------------------------------
 GRANT SELECT, INSERT, UPDATE, DELETE 
 ON ALL TABLES IN SCHEMA public 

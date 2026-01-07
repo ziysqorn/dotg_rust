@@ -107,7 +107,7 @@ pub async fn handle_socket(socket: WebSocket, app_state_: AppState, username: &S
             if let Err(e) = sender.send(Message::Text(message.into())).await {
                 println!("{}", e);
             } else {
-                println!("{}", temp);
+                //println!("{}", temp);
             }
         }
     });

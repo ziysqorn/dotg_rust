@@ -9,6 +9,7 @@ use std::{
 
 pub type ClientSender = tokio::sync::mpsc::UnboundedSender<String>;
 
+//Map to store a mpsc Sender of the coresponding user
 pub type ClientsMap = Arc<RwLock<HashMap<String, ClientSender>>>;
 
 //AppState that contains Connection Pool and Clients Map for Web Socket
