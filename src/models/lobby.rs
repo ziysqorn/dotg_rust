@@ -1,7 +1,8 @@
+use redis_macros::{FromRedisValue, ToRedisArgs};
 use serde::{Deserialize, Serialize};
 use sqlx::prelude::FromRow;
 
-#[derive(Clone, Debug, Deserialize, Serialize, FromRow)]
+#[derive(Clone, Debug, Deserialize, Serialize, FromRow, FromRedisValue, ToRedisArgs)]
 pub struct LobbyInfo {
     pub lobby_name: String,
     pub leader: String,

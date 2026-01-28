@@ -37,6 +37,7 @@ select * from users
 select * from FriendRequests
 select * from friends
 update users set status = false where username = 'haha'
+update users set status = false
 delete from FriendRequests where sender = 'haha' and receiver = 'keke' 
 or sender = 'keke' and receiver = 'haha'
 delete from friends where player1 = 'haha' and player2 = 'keke' 

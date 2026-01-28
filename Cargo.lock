@@ -393,6 +393,7 @@ dependencies = [
  "futures-util",
  "jsonwebtoken",
  "redis",
+ "redis-macros",
  "regex",
  "serde",
  "serde_json",
@@ -1463,6 +1464,30 @@ dependencies = [
  "tokio-util",
  "url",
  "xxhash-rust",
+]
+
+[[package]]
+name = "redis-macros"
+version = "1.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "82564bc57de627f98550cc701f11c7568b3129e3cb7ed872853907347d0742d4"
+dependencies = [
+ "redis",
+ "redis-macros-derive",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "redis-macros-derive"
+version = "1.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "adace005895c5740ee8845c571e45d88922c77865697f3e7631b1d9561829278"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "redis",
+ "syn",
 ]
 
 [[package]]

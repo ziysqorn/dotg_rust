@@ -1,7 +1,7 @@
 use redis::{
     AsyncConnectionConfig, ConnectionAddr, FromRedisValue, PushInfo, PushKind, RedisConnectionInfo,
 };
-use std::{collections::HashMap, sync::Arc};
+use std::{collections::HashMap, io::Write, process::Child, sync::Arc};
 use tokio::sync::{
     RwLock,
     mpsc::{self, UnboundedReceiver},
@@ -17,6 +17,8 @@ use app_state::{AppState, ClientSender, ClientsMap};
 use controllers::controllers_center;
 use dotenvy::dotenv;
 use sqlx::PgPool;
+
+use crate::app_state::GameServerExeMap;
 
 #[tokio::main]
 async fn main() -> Result<(), sqlx::Error> {
@@ -38,9 +40,13 @@ async fn main() -> Result<(), sqlx::Error> {
     //
     let clients_map: ClientsMap = Arc::new(RwLock::new(HashMap::<String, ClientSender>::new()));
 
+    let game_server_exe_map: GameServerExeMap =
+        Arc::new(RwLock::new(HashMap::<String, Child>::new()));
+
     let app_state_ = AppState {
         connection_pool,
         clients_map,
+        game_server_exe_map,
         redis_conn,
     };
 
@@ -59,7 +65,10 @@ async fn main() -> Result<(), sqlx::Error> {
 
 async fn subcribe_to_channel(app_state_: AppState, mut rx: UnboundedReceiver<PushInfo>) {
     let mut conn = app_state_.redis_conn.clone();
-    if let Ok(()) = conn.subscribe(&["web_socket_events"]).await {
+    if let Ok(()) = conn
+        .subscribe(&["web_socket_events", "drop_game_server_event"])
+        .await
+    {
         loop {
             if let Some(redis_message) = rx.recv().await {
                 if redis_message.kind == PushKind::Message
@@ -86,6 +95,23 @@ async fn subcribe_to_channel(app_state_: AppState, mut rx: UnboundedReceiver<Pus
                                         if let Some(sender) = clients_map.get(user_id) {
                                             let _ = sender.send(data.to_string());
                                         }
+                                    }
+                                }
+                            }
+                            "drop_game_server_event" => {
+                                if let Ok(game_server_id) =
+                                    String::from_redis_value(redis_message.data[1].clone())
+                                {
+                                    {
+                                        // let mut game_server_exe_map =
+                                        //     app_state_.game_server_exe_map.write().await;
+                                        // if let Some(game_server_proccess) =
+                                        //     game_server_exe_map.get_mut(&game_server_id)
+                                        // {
+                                        //     if let Ok(_) = game_server_proccess.kill() {
+                                        //         game_server_exe_map.remove(&game_server_id);
+                                        //     }
+                                        // }
                                     }
                                 }
                             }

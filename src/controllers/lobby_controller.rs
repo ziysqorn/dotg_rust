@@ -140,12 +140,6 @@ pub async fn invite_to_lobby(
         .into_response();
 }
 
-pub async fn expire_lobby_invitation(
-    State(app_state_): State<AppState>,
-    claims: AuthUser,
-) -> impl IntoResponse {
-}
-
 pub async fn accept_lobby_invitation(
     State(app_state_): State<AppState>,
     claims: AuthUser,
@@ -208,58 +202,70 @@ pub async fn accept_lobby_invitation(
             .await
     {
         let key_list = format!("lobby:{}", target_lobby_id);
-        //Receiver leave current lobby first then join the new lobby
-        leave_lobby_proccess(request_receiver, redis_conn.clone()).await;
-        //Get lobby members set
-        if let Ok(mut member_set) = AsyncCommands::smembers::<_, HashSet<String>>(
-            &mut redis_conn,
-            format!("{}:members", &key_list),
-        )
-        .await
-        {
-            if member_set.len() == 5 {
-                return (
-                    StatusCode::BAD_REQUEST,
-                    Json(json!({
-                        "sender": request_sender,
-                        "message": "Lobby full !"
-                    })),
-                )
-                    .into_response();
-            }
-            pipe.atomic()
-                .set(format!("user:{}:lobby", request_receiver), &target_lobby_id)
-                .sadd(format!("{}:members", &key_list), request_receiver);
-            if let Ok(_) = pipe.query_async::<()>(&mut redis_conn).await {
-                for member in member_set.iter() {
-                    if member == request_receiver {
-                        continue;
-                    }
-                    let data_to_lobby = json!({
-                        "resource": "lobby_invitation",
-                        "action": "accept",
-                        "payload": {
-                            "sender": request_sender,
-                            "receiver": request_receiver
-                        }
-                    });
-                    let pub_sub_data_json = json!({
-                        "username": member,
-                        "data": data_to_lobby
-                    });
-                    let _ = AsyncCommands::publish::<_, _, ()>(
-                        &mut redis_conn,
-                        "web_socket_events",
-                        pub_sub_data_json.to_string(),
-                    )
-                    .await;
-                }
-                if let Ok(lobby_info) = AsyncCommands::hgetall::<_, HashMap<String, redis::Value>>(
-                    &mut redis_conn,
-                    &key_list,
-                )
+        if let Ok(lobby_info) =
+            AsyncCommands::hgetall::<_, HashMap<String, redis::Value>>(&mut redis_conn, &key_list)
                 .await
-                {
+        {
+            if let Some(lobby_status_redis) = lobby_info.get("status") {
+                if let Ok(lobby_status) = String::from_redis_value_ref(lobby_status_redis) {
+                    if lobby_status != "Ready" {
+                        return (
+                            StatusCode::BAD_REQUEST,
+                            Json(json!({
+                                "sender": request_sender,
+                                "message": "Lobby busy !"
+                            })),
+                        )
+                            .into_response();
+                    }
+                }
+            }
+            //Get lobby members set
+            if let Ok(mut member_set) = AsyncCommands::smembers::<_, HashSet<String>>(
+                &mut redis_conn,
+                format!("{}:members", &key_list),
+            )
+            .await
+            {
+                if member_set.len() == 5 {
+                    return (
+                        StatusCode::BAD_REQUEST,
+                        Json(json!({
+                            "sender": request_sender,
+                            "message": "Lobby full !"
+                        })),
+                    )
+                        .into_response();
+                }
+                //Receiver leave current lobby first then join the new lobby
+                leave_lobby_proccess(request_receiver, redis_conn.clone()).await;
+                pipe.atomic()
+                    .set(format!("user:{}:lobby", request_receiver), &target_lobby_id)
+                    .sadd(format!("{}:members", &key_list), request_receiver);
+                if let Ok(_) = pipe.query_async::<()>(&mut redis_conn).await {
+                    for member in member_set.iter() {
+                        if member == request_receiver {
+                            continue;
+                        }
+                        let data_to_lobby = json!({
+                            "resource": "lobby_invitation",
+                            "action": "accept",
+                            "payload": {
+                                "sender": request_sender,
+                                "receiver": request_receiver
+                            }
+                        });
+                        let pub_sub_data_json = json!({
+                            "username": member,
+                            "data": data_to_lobby
+                        });
+                        let _ = AsyncCommands::publish::<_, _, ()>(
+                            &mut redis_conn,
+                            "web_socket_events",
+                            pub_sub_data_json.to_string(),
+                        )
+                        .await;
+                    }
                     member_set.insert(request_receiver.clone());
                     let lobby_info_response = LobbyInfo::new(
                         &String::from_redis_value(lobby_info.get("lobby_name").unwrap().clone())
@@ -690,7 +696,7 @@ pub async fn kick_member(
         .into_response();
 }
 
-async fn leave_lobby_proccess(username: &String, mut redis_conn: MultiplexedConnection) {
+pub async fn leave_lobby_proccess(username: &String, mut redis_conn: MultiplexedConnection) {
     let mut pipe = redis::pipe();
     //lobby:lobby_haha - {name: "", leader: ""}
     //user:haha:lobby - lobby_haha
@@ -701,7 +707,7 @@ async fn leave_lobby_proccess(username: &String, mut redis_conn: MultiplexedConn
     {
         let current_key_list = format!("lobby:{}", current_lobby_id);
         pipe.atomic()
-            .set(format!("user:{}:lobby", username), "")
+            //.set(format!("user:{}:lobby", username), "")
             .srem(format!("{}:members", &current_key_list), username);
         if let Ok(_) = pipe.query_async::<()>(&mut redis_conn).await {
             //Get lobby members set
@@ -712,21 +718,19 @@ async fn leave_lobby_proccess(username: &String, mut redis_conn: MultiplexedConn
             .await
             {
                 if member_set.len() == 0 {
-                    let _ = AsyncCommands::srem::<_, _, ()>(
-                        &mut redis_conn,
-                        "active_lobbies",
-                        current_lobby_id,
-                    )
-                    .await;
-                    let _ = AsyncCommands::del::<_, ()>(&mut redis_conn, current_key_list).await;
+                    pipe.atomic()
+                        .srem("active_lobbies", &current_lobby_id)
+                        .del(&current_key_list)
+                        .del(format!("user:{}:lobby", username))
+                        .del(format!("{}:members", &current_key_list));
+                    let _ = pipe.query_async::<()>(&mut redis_conn).await;
                     return;
                 }
-                if let Ok(lobby_leader) = AsyncCommands::hget::<_, _, String>(
-                    &mut redis_conn,
-                    &current_key_list,
-                    "leader",
-                )
-                .await
+                pipe.atomic()
+                    .hget(&current_key_list, "leader")
+                    .get(format!("game_server:{}", current_lobby_id));
+                if let Ok((lobby_leader, game_server_info)) =
+                    pipe.query_async::<(String, String)>(&mut redis_conn).await
                 {
                     //If lobby's leader is left user, grant leader lobby to the first member of the lobby set
                     let mut new_leader = &lobby_leader;
@@ -751,7 +755,9 @@ async fn leave_lobby_proccess(username: &String, mut redis_conn: MultiplexedConn
                             )
                             .srem("active_lobbies", &current_lobby_id)
                             .sadd("active_lobbies", &new_lobby_id)
-                            .del(format!("{}:members", &current_key_list));
+                            .del(format!("{}:members", &current_key_list))
+                            .set(format!("user:{}:lobby", username), &new_lobby_id)
+                            .set(format!("game_server:{}", new_lobby_id), game_server_info);
                         let _ = pipe.query_async::<()>(&mut redis_conn).await;
                     }
                     for member in member_set.iter() {
@@ -768,6 +774,7 @@ async fn leave_lobby_proccess(username: &String, mut redis_conn: MultiplexedConn
                             "payload": {
                                 "left_user": username,
                                 "lobby": {
+                                    "lobby_id": new_lobby_id,
                                     "lobby_name": lobby_info_for_member.lobby_name,
                                     "leader": lobby_info_for_member.leader,
                                     "limit_num": lobby_info_for_member.limit_num,

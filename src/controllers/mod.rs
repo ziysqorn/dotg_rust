@@ -1,4 +1,6 @@
 mod friend_controller;
+mod game_server_controller;
+mod in_game_controller;
 mod lobby_controller;
 mod user_controller;
 mod web_socket_controller;
@@ -7,6 +9,8 @@ pub mod controllers_center {
 
     use crate::app_state::AppState;
     use crate::controllers::friend_controller;
+    use crate::controllers::game_server_controller;
+    use crate::controllers::in_game_controller;
     use crate::controllers::lobby_controller;
     use crate::controllers::user_controller;
     use crate::controllers::web_socket_controller;
@@ -74,6 +78,26 @@ pub mod controllers_center {
             .route(
                 "/lobby/kick",
                 axum::routing::post(lobby_controller::kick_member),
+            )
+            .route(
+                "/game_server/create",
+                axum::routing::post(game_server_controller::create_game_server),
+            )
+            .route(
+                "/game_server/drop",
+                axum::routing::post(game_server_controller::drop_game_server),
+            )
+            .route(
+                "/in_game/character_stats/get",
+                axum::routing::get(in_game_controller::get_character_stats),
+            )
+            .route(
+                "/in_game/character_stats/save",
+                axum::routing::post(in_game_controller::save_character_stats),
+            )
+            .route(
+                "/in_game/character_stats/remove",
+                axum::routing::post(in_game_controller::remove_character_stats),
             )
             .route(
                 "/ws",
