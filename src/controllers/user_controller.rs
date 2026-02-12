@@ -153,79 +153,87 @@ pub async fn login(
                     {
                         let game_server_info_key = format!("game_server:{}", current_lobby_id);
                         let lobby_info_keylist = format!("lobby:{}", current_lobby_id);
-                        if let Ok(game_server_info_str) =
-                            AsyncCommands::get::<_, String>(&mut redis_conn, game_server_info_key)
-                                .await
+                        if let Ok(game_server_info_opt) = AsyncCommands::get::<_, Option<String>>(
+                            &mut redis_conn,
+                            game_server_info_key,
+                        )
+                        .await
                         {
                             let lobby_member_keylist = format!("{}:members", lobby_info_keylist);
-                            if !game_server_info_str.is_empty() {
-                                let mut pipe = redis::pipe();
-                                pipe.atomic()
-                                    .sadd(&lobby_member_keylist, in_username)
-                                    .hgetall(lobby_info_keylist);
-                                if let Ok((_, lobby_info_map)) = pipe
-                                    .query_async::<((), HashMap<String, String>)>(&mut redis_conn)
-                                    .await
-                                {
-                                    game_server_info =
-                                        serde_json::from_str::<GameServer>(&game_server_info_str)
-                                            .expect("Can't parse string data to struct");
-
-                                    if let Ok(member_set) =
-                                        AsyncCommands::smembers::<_, HashSet<String>>(
+                            if let Some(game_server_info_str) = game_server_info_opt {
+                                if !game_server_info_str.is_empty() {
+                                    let mut pipe = redis::pipe();
+                                    pipe.atomic()
+                                        .sadd(&lobby_member_keylist, in_username)
+                                        .hgetall(lobby_info_keylist);
+                                    if let Ok((_, lobby_info_map)) = pipe
+                                        .query_async::<((), HashMap<String, String>)>(
                                             &mut redis_conn,
-                                            lobby_member_keylist,
                                         )
                                         .await
                                     {
-                                        let lobby_info = LobbyInfo {
-                                            lobby_name: lobby_info_map
-                                                .get("lobby_name")
-                                                .expect("Error getting value from map")
-                                                .clone(),
-                                            leader: lobby_info_map
-                                                .get("leader")
-                                                .expect("Error getting value from map")
-                                                .clone(),
-                                            limit_num: lobby_info_map
-                                                .get("leader")
-                                                .expect("Error getting value from map")
-                                                .clone()
-                                                .parse()
-                                                .unwrap_or(5),
-                                            status: lobby_info_map
-                                                .get("status")
-                                                .expect("Error getting value from map")
-                                                .clone(),
-                                        };
-                                        lobby_info_response = json!({
-                                            "lobby_name": lobby_info.lobby_name,
-                                            "leader": lobby_info.leader,
-                                            "limit_num": lobby_info.limit_num,
-                                            "status": lobby_info.status,
-                                            "members": member_set
-                                        });
-                                        for member in member_set {
-                                            if &member == in_username {
-                                                continue;
-                                            }
-                                            let data_to_lobby = json!({
-                                                "resource": "lobby",
-                                                "action": "player_join",
-                                                "payload": {
-                                                    "username": in_username
-                                                }
-                                            });
-                                            let pub_sub_data_json = json!({
-                                                "username": member,
-                                                "data": data_to_lobby
-                                            });
-                                            let _ = AsyncCommands::publish::<_, _, ()>(
-                                                &mut redis_conn,
-                                                "web_socket_events",
-                                                pub_sub_data_json.to_string(),
+                                        if !lobby_info_map.is_empty() {
+                                            game_server_info = serde_json::from_str::<GameServer>(
+                                                &game_server_info_str,
                                             )
-                                            .await;
+                                            .expect("Can't parse string data to struct");
+                                            if let Ok(member_set) =
+                                                AsyncCommands::smembers::<_, HashSet<String>>(
+                                                    &mut redis_conn,
+                                                    lobby_member_keylist,
+                                                )
+                                                .await
+                                            {
+                                                let lobby_info = LobbyInfo {
+                                                    lobby_name: lobby_info_map
+                                                        .get("lobby_name")
+                                                        .expect("Error getting value from map")
+                                                        .clone(),
+                                                    leader: lobby_info_map
+                                                        .get("leader")
+                                                        .expect("Error getting value from map")
+                                                        .clone(),
+                                                    limit_num: lobby_info_map
+                                                        .get("leader")
+                                                        .expect("Error getting value from map")
+                                                        .clone()
+                                                        .parse()
+                                                        .unwrap_or(5),
+                                                    status: lobby_info_map
+                                                        .get("status")
+                                                        .expect("Error getting value from map")
+                                                        .clone(),
+                                                };
+                                                lobby_info_response = json!({
+                                                    "lobby_name": lobby_info.lobby_name,
+                                                    "leader": lobby_info.leader,
+                                                    "limit_num": lobby_info.limit_num,
+                                                    "status": lobby_info.status,
+                                                    "members": member_set
+                                                });
+                                                for member in member_set {
+                                                    if &member == in_username {
+                                                        continue;
+                                                    }
+                                                    let data_to_lobby = json!({
+                                                        "resource": "lobby",
+                                                        "action": "player_join",
+                                                        "payload": {
+                                                            "username": in_username
+                                                        }
+                                                    });
+                                                    let pub_sub_data_json = json!({
+                                                        "username": member,
+                                                        "data": data_to_lobby
+                                                    });
+                                                    let _ = AsyncCommands::publish::<_, _, ()>(
+                                                        &mut redis_conn,
+                                                        "web_socket_events",
+                                                        pub_sub_data_json.to_string(),
+                                                    )
+                                                    .await;
+                                                }
+                                            }
                                         }
                                     }
                                 }

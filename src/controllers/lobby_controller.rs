@@ -718,19 +718,24 @@ pub async fn leave_lobby_proccess(username: &String, mut redis_conn: Multiplexed
             .await
             {
                 if member_set.len() == 0 {
-                    pipe.atomic()
-                        .srem("active_lobbies", &current_lobby_id)
-                        .del(&current_key_list)
-                        .del(format!("user:{}:lobby", username))
-                        .del(format!("{}:members", &current_key_list));
-                    let _ = pipe.query_async::<()>(&mut redis_conn).await;
+                    let game_server_info_key = format!("game_server:{}", current_lobby_id);
+                    if let Ok(game_server_info_str) =
+                        AsyncCommands::get::<_, String>(&mut redis_conn, game_server_info_key).await
+                    {
+                        if game_server_info_str.is_empty() {
+                            pipe.atomic()
+                                .srem("active_lobbies", &current_lobby_id)
+                                .del(&current_key_list)
+                                .del(format!("user:{}:lobby", username))
+                                .del(format!("{}:members", &current_key_list));
+                            let _ = pipe.query_async::<()>(&mut redis_conn).await;
+                        }
+                    }
                     return;
                 }
-                pipe.atomic()
-                    .hget(&current_key_list, "leader")
-                    .get(format!("game_server:{}", current_lobby_id));
-                if let Ok((lobby_leader, game_server_info)) =
-                    pipe.query_async::<(String, String)>(&mut redis_conn).await
+
+                if let Ok(lobby_leader) =
+                    AsyncCommands::hget(&mut redis_conn, &current_key_list, "leader").await
                 {
                     //If lobby's leader is left user, grant leader lobby to the first member of the lobby set
                     let mut new_leader = &lobby_leader;
@@ -756,8 +761,18 @@ pub async fn leave_lobby_proccess(username: &String, mut redis_conn: Multiplexed
                             .srem("active_lobbies", &current_lobby_id)
                             .sadd("active_lobbies", &new_lobby_id)
                             .del(format!("{}:members", &current_key_list))
-                            .set(format!("user:{}:lobby", username), &new_lobby_id)
-                            .set(format!("game_server:{}", new_lobby_id), game_server_info);
+                            .set(format!("user:{}:lobby", username), &new_lobby_id);
+                        if let Ok(game_server_info_opt) = AsyncCommands::get::<_, Option<String>>(
+                            &mut redis_conn,
+                            format!("game_server:{}", current_lobby_id),
+                        )
+                        .await
+                        {
+                            if let Some(game_server_info) = game_server_info_opt {
+                                pipe.atomic()
+                                    .set(format!("game_server:{}", new_lobby_id), game_server_info);
+                            }
+                        }
                         let _ = pipe.query_async::<()>(&mut redis_conn).await;
                     }
                     for member in member_set.iter() {

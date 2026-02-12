@@ -63,6 +63,7 @@ pub async fn save_character_stats(
                     AsyncCommands::set::<_, _, ()>(&mut redis_conn, key_list, character_info_json)
                         .await
                 {
+                    println!("Saved character info: {:?}", character_info);
                     return (StatusCode::CREATED, Json(character_info)).into_response();
                 }
             }
@@ -82,6 +83,7 @@ pub async fn get_character_stats(
     let key_list = format!("character_info:{}", auth_user.username);
     let mut redis_conn = app_state_.redis_conn.clone();
     if let Ok(character_info) = AsyncCommands::get::<_, String>(&mut redis_conn, key_list).await {
+        println!("Returned character info: {:?}", character_info);
         return (StatusCode::OK, character_info).into_response();
     }
     return (
