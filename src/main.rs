@@ -22,7 +22,7 @@ use crate::app_state::GameServerExeMap;
 
 #[tokio::main]
 async fn main() -> Result<(), sqlx::Error> {
-    dotenv().expect("Error loading .env file");
+    dotenv().ok();
 
     let connection_str = std::env::var("DATABASE_URL").expect("DATABASE_URL not found !");
     let redis_url = std::env::var("REDIS_URL").expect("REDIS_URL not found !");

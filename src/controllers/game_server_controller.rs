@@ -82,7 +82,6 @@ pub async fn create_game_server(
                     .arg("-nopause")
                     .arg("-log")
                     .arg(format!("-server_id={}", current_lobby_id))
-                    .stdin(Stdio::piped())
                     .spawn()
                 {
                     //let mut pipe = redis::pipe();
